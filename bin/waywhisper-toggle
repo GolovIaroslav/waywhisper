@@ -1,0 +1,45 @@
+#!/usr/bin/env python3
+import os
+import signal
+import subprocess
+import sys
+import time
+
+
+PID_FILE = os.environ.get("WAYWHISPER_PID_FILE", "/tmp/waywhisper.pid")
+SERVICE_NAME = os.environ.get("WAYWHISPER_SERVICE", "waywhisper.service")
+
+
+def notify(title, message):
+    subprocess.run(["notify-send", title, message], stderr=subprocess.DEVNULL)
+
+
+def daemon_pid():
+    if not os.path.exists(PID_FILE):
+        return None
+    try:
+        with open(PID_FILE, encoding="utf-8") as f:
+            pid = int(f.read().strip())
+        os.kill(pid, 0)
+        return pid
+    except (OSError, ValueError):
+        try:
+            os.remove(PID_FILE)
+        except OSError:
+            pass
+        return None
+
+
+pid = daemon_pid()
+if pid is None:
+    subprocess.Popen(["systemctl", "--user", "start", SERVICE_NAME])
+    for _ in range(45):
+        time.sleep(1)
+        pid = daemon_pid()
+        if pid is not None:
+            break
+    else:
+        notify("WayWhisper", "Service did not start")
+        sys.exit(1)
+
+os.kill(pid, signal.SIGUSR1)

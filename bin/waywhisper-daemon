@@ -1,0 +1,345 @@
+#!/usr/bin/env python3
+import os
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import wave
+
+
+def env_float(name, default):
+    try:
+        return float(os.environ.get(name, default))
+    except ValueError:
+        return float(default)
+
+
+def env_int(name, default):
+    try:
+        return int(os.environ.get(name, default))
+    except ValueError:
+        return int(default)
+
+
+MIC_NAME = os.environ.get("WAYWHISPER_MIC", "@DEFAULT_SOURCE@")
+PID_FILE = os.environ.get("WAYWHISPER_PID_FILE", "/tmp/waywhisper.pid")
+MODEL_NAME = os.environ.get("WAYWHISPER_MODEL", "large-v3-turbo")
+DEVICE = os.environ.get("WAYWHISPER_DEVICE", "auto")
+COMPUTE_TYPE = os.environ.get("WAYWHISPER_COMPUTE_TYPE", "auto")
+LANGUAGE = os.environ.get("WAYWHISPER_LANGUAGE") or None
+SAMPLE_RATE = env_int("WAYWHISPER_SAMPLE_RATE", 16000)
+SAMPLE_WIDTH = 2
+CHANNELS = 1
+READ_CHUNK_BYTES = env_int("WAYWHISPER_READ_CHUNK_BYTES", 4000)
+STOP_TAIL_SECONDS = env_float("WAYWHISPER_STOP_TAIL_SECONDS", 1.0)
+WAV_END_SILENCE_SECONDS = env_float("WAYWHISPER_WAV_END_SILENCE_SECONDS", 1.0)
+CHUNK_LENGTH = env_int("WAYWHISPER_CHUNK_LENGTH", 30)
+VAD_THRESHOLD = env_float("WAYWHISPER_VAD_THRESHOLD", 0.3)
+VAD_MIN_SILENCE_MS = env_int("WAYWHISPER_VAD_MIN_SILENCE_MS", 900)
+VAD_SPEECH_PAD_MS = env_int("WAYWHISPER_VAD_SPEECH_PAD_MS", 500)
+PASTE_MODE = os.environ.get("WAYWHISPER_PASTE_MODE", "clipboard").lower()
+LAST_TEXT_FILE = os.path.expanduser(
+    os.environ.get("WAYWHISPER_LAST_TEXT_FILE", "~/.cache/waywhisper/last.txt")
+)
+
+MODEL_VRAM_HINTS_MIB = {
+    "tiny": 1024,
+    "base": 1024,
+    "small": 2048,
+    "medium": 4096,
+    "large": 5500,
+    "large-v1": 5500,
+    "large-v2": 5500,
+    "large-v3": 5500,
+    "large-v3-turbo": 4500,
+}
+
+model = None
+recording = False
+rec_thread = None
+audio_buffer = []
+buffer_lock = threading.Lock()
+
+
+def notify(title, message):
+    subprocess.run(["notify-send", title, message], stderr=subprocess.DEVNULL)
+
+
+def gpu_memory_free_mib():
+    if not shutil.which("nvidia-smi"):
+        return None
+    try:
+        result = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=memory.free",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        if result.returncode != 0:
+            return None
+        values = [int(line.strip()) for line in result.stdout.splitlines() if line.strip()]
+        return max(values) if values else None
+    except Exception:
+        return None
+
+
+def model_vram_hint_mib(model_name):
+    lowered = model_name.lower()
+    for key, value in MODEL_VRAM_HINTS_MIB.items():
+        if lowered == key or lowered.startswith(key + "."):
+            return value
+    if "large-v3-turbo" in lowered:
+        return MODEL_VRAM_HINTS_MIB["large-v3-turbo"]
+    if "large" in lowered:
+        return MODEL_VRAM_HINTS_MIB["large"]
+    if "medium" in lowered:
+        return MODEL_VRAM_HINTS_MIB["medium"]
+    if "small" in lowered:
+        return MODEL_VRAM_HINTS_MIB["small"]
+    return 2048
+
+
+def choose_runtime():
+    requested_device = DEVICE
+    requested_compute = COMPUTE_TYPE
+
+    if requested_device != "auto":
+        device = requested_device
+    else:
+        free_mib = gpu_memory_free_mib()
+        need_mib = model_vram_hint_mib(MODEL_NAME)
+        if free_mib is not None and free_mib >= need_mib:
+            device = "cuda"
+        elif free_mib is not None:
+            notify(
+                "WayWhisper",
+                f"Free VRAM: {free_mib} MiB, recommended: {need_mib} MiB. Falling back to CPU.",
+            )
+            device = "cpu"
+        else:
+            device = "cpu"
+
+    if requested_compute != "auto":
+        compute_type = requested_compute
+    else:
+        compute_type = "float16" if device == "cuda" else "int8"
+
+    if device == "cuda":
+        free_mib = gpu_memory_free_mib()
+        need_mib = model_vram_hint_mib(MODEL_NAME)
+        if free_mib is not None and free_mib < need_mib:
+            notify(
+                "WayWhisper",
+                f"Low VRAM for {MODEL_NAME}: {free_mib}/{need_mib} MiB free.",
+            )
+
+    return device, compute_type
+
+
+def load_model():
+    global model
+    from faster_whisper import WhisperModel
+
+    device, compute_type = choose_runtime()
+    notify("WayWhisper", f"Loading {MODEL_NAME} on {device}...")
+    model = WhisperModel(MODEL_NAME, device=device, compute_type=compute_type)
+    notify("WayWhisper", "Ready")
+
+
+def is_screen_locked():
+    try:
+        result = subprocess.run(
+            ["loginctl", "show-session", "self", "-p", "LockedHint"],
+            capture_output=True,
+            text=True,
+            timeout=0.5,
+        )
+        return "LockedHint=yes" in result.stdout
+    except Exception:
+        return False
+
+
+def copy_to_clipboard(text):
+    result = subprocess.run(
+        ["wl-copy", "--type", "text/plain;charset=utf-8"],
+        input=text,
+        text=True,
+        stderr=subprocess.DEVNULL,
+    )
+    return result.returncode == 0
+
+
+def paste_from_clipboard():
+    if not shutil.which("ydotool"):
+        return False
+    result = subprocess.run(
+        ["ydotool", "key", "29:1", "47:1", "47:0", "29:0"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return result.returncode == 0
+
+
+def type_text_safe(text):
+    if is_screen_locked():
+        return
+
+    os.makedirs(os.path.dirname(LAST_TEXT_FILE), exist_ok=True)
+    with open(LAST_TEXT_FILE, "w", encoding="utf-8") as f:
+        f.write(text)
+
+    text_to_paste = text + " "
+    if not copy_to_clipboard(text_to_paste):
+        notify("WayWhisper", "Clipboard copy failed")
+        return
+
+    if PASTE_MODE == "copy":
+        notify("WayWhisper", "Copied")
+        return
+
+    time.sleep(0.12)
+    if paste_from_clipboard():
+        return
+
+    notify("WayWhisper", "Copied. Start ydotool for automatic paste.")
+
+
+def record_worker():
+    global recording
+    proc = subprocess.Popen(
+        [
+            "parec",
+            f"--device={MIC_NAME}",
+            f"--channels={CHANNELS}",
+            f"--rate={SAMPLE_RATE}",
+            "--format=s16le",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+
+    try:
+        tail_until = None
+        while True:
+            if is_screen_locked():
+                recording = False
+                notify("WayWhisper", "Stopped because the session is locked")
+                break
+
+            if recording:
+                tail_until = None
+            else:
+                if tail_until is None:
+                    tail_until = time.monotonic() + STOP_TAIL_SECONDS
+                elif time.monotonic() >= tail_until:
+                    break
+
+            data = proc.stdout.read(READ_CHUNK_BYTES)
+            if data:
+                with buffer_lock:
+                    audio_buffer.append(data)
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+
+def transcribe_and_type():
+    with buffer_lock:
+        data = b"".join(audio_buffer)
+        audio_buffer.clear()
+
+    if len(data) < SAMPLE_RATE * SAMPLE_WIDTH:
+        notify("WayWhisper", "Too short")
+        return
+
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+        tmp_path = f.name
+        with wave.open(f, "wb") as wf:
+            wf.setnchannels(CHANNELS)
+            wf.setsampwidth(SAMPLE_WIDTH)
+            wf.setframerate(SAMPLE_RATE)
+            wf.writeframes(data)
+            silence = b"\x00" * int(SAMPLE_RATE * WAV_END_SILENCE_SECONDS * SAMPLE_WIDTH)
+            wf.writeframes(silence)
+
+    try:
+        notify("WayWhisper", "Transcribing...")
+        segments, _ = model.transcribe(
+            tmp_path,
+            language=LANGUAGE,
+            beam_size=5,
+            vad_filter=True,
+            vad_parameters=dict(
+                threshold=VAD_THRESHOLD,
+                min_silence_duration_ms=VAD_MIN_SILENCE_MS,
+                min_speech_duration_ms=100,
+                max_speech_duration_s=CHUNK_LENGTH,
+                speech_pad_ms=VAD_SPEECH_PAD_MS,
+            ),
+            chunk_length=CHUNK_LENGTH,
+            condition_on_previous_text=True,
+        )
+        text = " ".join(seg.text.strip() for seg in segments).strip()
+
+        if text:
+            type_text_safe(text)
+            preview = text[:80] + ("..." if len(text) > 80 else "")
+            notify("WayWhisper", f"Done: {preview}")
+        else:
+            notify("WayWhisper", "No speech recognized")
+    finally:
+        os.unlink(tmp_path)
+
+
+def toggle_recording(_sig, _frame):
+    global recording, rec_thread
+
+    if recording:
+        recording = False
+        if rec_thread:
+            rec_thread.join(timeout=STOP_TAIL_SECONDS + 2)
+        threading.Thread(target=transcribe_and_type, daemon=True).start()
+        return
+
+    if is_screen_locked():
+        notify("WayWhisper", "Session is locked")
+        return
+
+    with buffer_lock:
+        audio_buffer.clear()
+    recording = True
+    notify("WayWhisper", "Recording")
+    rec_thread = threading.Thread(target=record_worker, daemon=True)
+    rec_thread.start()
+
+
+def cleanup():
+    if os.path.exists(PID_FILE):
+        os.remove(PID_FILE)
+
+
+signal.signal(signal.SIGUSR1, toggle_recording)
+signal.signal(signal.SIGTERM, lambda _sig, _frame: sys.exit(0))
+
+with open(PID_FILE, "w", encoding="utf-8") as f:
+    f.write(str(os.getpid()))
+
+load_model()
+
+try:
+    while True:
+        time.sleep(1)
+except KeyboardInterrupt:
+    pass
+finally:
+    cleanup()

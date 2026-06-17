@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=WayWhisper Toggle
+Exec=waywhisper-toggle
+NoDisplay=true
+StartupNotify=false
+X-KDE-GlobalAccel-CommandShortcut=true

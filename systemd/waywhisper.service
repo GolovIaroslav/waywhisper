@@ -1,0 +1,14 @@
+[Unit]
+Description=WayWhisper voice input daemon
+After=graphical-session.target pipewire.service
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/waywhisper/waywhisper.env
+ExecStartPre=/bin/rm -f /tmp/waywhisper.pid
+ExecStart=%h/.local/share/waywhisper/venv/bin/python %h/.local/bin/waywhisper-daemon
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
