@@ -1,12 +1,21 @@
 # WayWhisper
 
-Small local voice input for Linux Wayland sessions. It records from PipeWire,
-transcribes with `faster-whisper`, copies the result with `wl-copy`, and can
-paste it into the focused app through `ydotool`.
+Local Whisper voice input for Linux Wayland sessions. WayWhisper records from
+PipeWire, transcribes speech to text with `faster-whisper`, copies the result
+with `wl-copy`, and can paste it into the focused app through `ydotool`.
 
 The setup is aimed at Arch Linux and KDE Plasma Wayland, but the daemon itself
 is not tied to Plasma. On other Wayland desktops you can bind
 `waywhisper-toggle` with your desktop's shortcut settings.
+
+## Features
+
+- Offline speech-to-text voice typing on Wayland.
+- Toggle recording from a desktop shortcut.
+- Clipboard paste for long dictation instead of slow key-by-key typing.
+- Extra audio tail after stop so the last word is less likely to be cut.
+- VRAM warning and CPU fallback for systems where the selected Whisper model
+  does not fit comfortably.
 
 ## Install on Arch Linux
 
@@ -14,6 +23,12 @@ is not tied to Plasma. On other Wayland desktops you can bind
 git clone https://github.com/GolovIaroslav/waywhisper.git
 cd waywhisper
 ./install-arch.sh
+```
+
+To preview the installer without changing the system:
+
+```bash
+./install-arch.sh --dry-run
 ```
 
 After the installer finishes, bind this command in KDE shortcuts:
@@ -92,6 +107,12 @@ WAYWHISPER_MODEL=medium
 systemctl --user status waywhisper
 systemctl --user restart waywhisper
 journalctl --user -u waywhisper -f
+```
+
+Install without starting services:
+
+```bash
+./install-arch.sh --no-start
 ```
 
 The daemon logs the recorded duration, transcribed duration, segment count, and

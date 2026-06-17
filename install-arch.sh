@@ -8,6 +8,8 @@ ENV_FILE="$CONFIG_DIR/waywhisper.env"
 BIN_DIR="$HOME/.local/bin"
 SYSTEMD_DIR="$HOME/.config/systemd/user"
 DESKTOP_DIR="$HOME/.local/share/applications"
+DRY_RUN=false
+START_SERVICE=true
 
 info() {
   printf '[waywhisper] %s\n' "$*"
@@ -20,6 +22,39 @@ warn() {
 die() {
   printf '[waywhisper] error: %s\n' "$*" >&2
   exit 1
+}
+
+usage() {
+  cat <<EOF
+Usage: ./install-arch.sh [--dry-run] [--no-start]
+
+Options:
+  --dry-run   Show what would be installed without changing the system.
+  --no-start  Install files and dependencies without starting user services.
+  -h, --help  Show this help.
+EOF
+}
+
+parse_args() {
+  while (($#)); do
+    case "$1" in
+      --dry-run) DRY_RUN=true ;;
+      --no-start) START_SERVICE=false ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "unknown option: $1" ;;
+    esac
+    shift
+  done
+}
+
+run() {
+  if [[ "$DRY_RUN" == true ]]; then
+    printf '[waywhisper] dry-run:'
+    printf ' %q' "$@"
+    printf '\n'
+  else
+    "$@"
+  fi
 }
 
 require_arch() {
@@ -36,10 +71,11 @@ install_packages() {
     wl-clipboard
     ydotool
     libnotify
+    uv
   )
 
   info "installing system packages"
-  sudo pacman -S --needed "${packages[@]}"
+  run sudo pacman -S --needed "${packages[@]}"
 }
 
 detect_default_source() {
@@ -57,10 +93,15 @@ ensure_config_key() {
 
 install_files() {
   info "installing files"
-  install -Dm755 "$ROOT_DIR/bin/waywhisper-daemon" "$BIN_DIR/waywhisper-daemon"
-  install -Dm755 "$ROOT_DIR/bin/waywhisper-toggle" "$BIN_DIR/waywhisper-toggle"
-  install -Dm644 "$ROOT_DIR/systemd/waywhisper.service" "$SYSTEMD_DIR/waywhisper.service"
-  install -Dm644 "$ROOT_DIR/desktop/waywhisper-toggle.desktop" "$DESKTOP_DIR/waywhisper-toggle.desktop"
+  run install -Dm755 "$ROOT_DIR/bin/waywhisper-daemon" "$BIN_DIR/waywhisper-daemon"
+  run install -Dm755 "$ROOT_DIR/bin/waywhisper-toggle" "$BIN_DIR/waywhisper-toggle"
+  run install -Dm644 "$ROOT_DIR/systemd/waywhisper.service" "$SYSTEMD_DIR/waywhisper.service"
+  run install -Dm644 "$ROOT_DIR/desktop/waywhisper-toggle.desktop" "$DESKTOP_DIR/waywhisper-toggle.desktop"
+
+  if [[ "$DRY_RUN" == true ]]; then
+    info "would create or update config at $ENV_FILE"
+    return
+  fi
 
   mkdir -p "$CONFIG_DIR"
   if [[ ! -f "$ENV_FILE" ]]; then
@@ -77,17 +118,31 @@ install_files() {
 }
 
 create_python_env() {
-  mkdir -p "$APP_HOME"
+  run mkdir -p "$APP_HOME"
+
+  if [[ "$DRY_RUN" == true ]]; then
+    if command -v conda >/dev/null 2>&1; then
+      info "would create Python environment with conda"
+    elif command -v uv >/dev/null 2>&1; then
+      info "would create Python 3.12 environment with uv"
+    else
+      warn "neither conda nor uv was found; pacman would install uv first"
+    fi
+    info "would install faster-whisper into $APP_HOME/venv"
+    return
+  fi
 
   if [[ -x "$APP_HOME/venv/bin/python" ]]; then
     info "using existing Python environment"
   elif command -v conda >/dev/null 2>&1; then
     info "creating conda environment with Python 3.12"
     conda create -y -p "$APP_HOME/venv" python=3.12 pip
+  elif command -v uv >/dev/null 2>&1; then
+    info "creating uv environment with Python 3.12"
+    uv python install 3.12
+    uv venv --python 3.12 "$APP_HOME/venv"
   else
-    info "creating Python venv"
-    python -m venv "$APP_HOME/venv"
-    warn "Arch Python can be newer than some wheels. If pip install fails, install conda and run this script again."
+    die "conda or uv is required to create a Python 3.12 environment"
   fi
 
   info "installing Python packages"
@@ -115,12 +170,17 @@ show_vram_note() {
 }
 
 enable_services() {
+  if [[ "$START_SERVICE" != true ]]; then
+    info "services were installed but not started because --no-start was used"
+    return
+  fi
+
   info "enabling services"
-  systemctl --user daemon-reload
-  systemctl --user enable --now waywhisper.service
+  run systemctl --user daemon-reload
+  run systemctl --user enable --now waywhisper.service
 
   if systemctl --user list-unit-files ydotool.service >/dev/null 2>&1; then
-    systemctl --user enable --now ydotool.service || \
+    run systemctl --user enable --now ydotool.service || \
       warn "ydotool service did not start; text will still be copied to clipboard"
   else
     warn "ydotool user service was not found; text will still be copied to clipboard"
@@ -128,6 +188,18 @@ enable_services() {
 }
 
 print_next_steps() {
+  if [[ "$DRY_RUN" == true ]]; then
+    cat <<EOF
+
+Dry run finished. No files were installed and no services were started.
+
+Run the installer without --dry-run to install WayWhisper:
+  ./install-arch.sh
+
+EOF
+    return
+  fi
+
   cat <<EOF
 
 WayWhisper is installed.
@@ -160,6 +232,7 @@ EOF
 }
 
 main() {
+  parse_args "$@"
   require_arch
 
   if [[ "${XDG_SESSION_TYPE:-}" != "wayland" ]]; then
