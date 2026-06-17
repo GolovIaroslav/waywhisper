@@ -24,6 +24,13 @@ def env_int(name, default):
         return int(default)
 
 
+def env_bool(name, default):
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 MIC_NAME = os.environ.get("WAYWHISPER_MIC", "@DEFAULT_SOURCE@")
 PID_FILE = os.environ.get("WAYWHISPER_PID_FILE", "/tmp/waywhisper.pid")
 MODEL_NAME = os.environ.get("WAYWHISPER_MODEL", "large-v3-turbo")
@@ -40,6 +47,8 @@ CHUNK_LENGTH = env_int("WAYWHISPER_CHUNK_LENGTH", 30)
 VAD_THRESHOLD = env_float("WAYWHISPER_VAD_THRESHOLD", 0.3)
 VAD_MIN_SILENCE_MS = env_int("WAYWHISPER_VAD_MIN_SILENCE_MS", 900)
 VAD_SPEECH_PAD_MS = env_int("WAYWHISPER_VAD_SPEECH_PAD_MS", 500)
+VAD_FILTER = env_bool("WAYWHISPER_VAD_FILTER", False)
+CONDITION_ON_PREVIOUS_TEXT = env_bool("WAYWHISPER_CONDITION_ON_PREVIOUS_TEXT", False)
 PASTE_MODE = os.environ.get("WAYWHISPER_PASTE_MODE", "clipboard").lower()
 LAST_TEXT_FILE = os.path.expanduser(
     os.environ.get("WAYWHISPER_LAST_TEXT_FILE", "~/.cache/waywhisper/last.txt")
@@ -66,6 +75,10 @@ buffer_lock = threading.Lock()
 
 def notify(title, message):
     subprocess.run(["notify-send", title, message], stderr=subprocess.DEVNULL)
+
+
+def log(message):
+    print(f"[waywhisper] {message}", flush=True)
 
 
 def gpu_memory_free_mib():
@@ -262,6 +275,9 @@ def transcribe_and_type():
         notify("WayWhisper", "Too short")
         return
 
+    audio_seconds = len(data) / (SAMPLE_RATE * SAMPLE_WIDTH * CHANNELS)
+    log(f"recorded {audio_seconds:.1f}s, {len(data)} bytes")
+
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
         tmp_path = f.name
         with wave.open(f, "wb") as wf:
@@ -274,11 +290,11 @@ def transcribe_and_type():
 
     try:
         notify("WayWhisper", "Transcribing...")
-        segments, _ = model.transcribe(
+        segments, info = model.transcribe(
             tmp_path,
             language=LANGUAGE,
             beam_size=5,
-            vad_filter=True,
+            vad_filter=VAD_FILTER,
             vad_parameters=dict(
                 threshold=VAD_THRESHOLD,
                 min_silence_duration_ms=VAD_MIN_SILENCE_MS,
@@ -287,9 +303,16 @@ def transcribe_and_type():
                 speech_pad_ms=VAD_SPEECH_PAD_MS,
             ),
             chunk_length=CHUNK_LENGTH,
-            condition_on_previous_text=True,
+            condition_on_previous_text=CONDITION_ON_PREVIOUS_TEXT,
         )
+        segments = list(segments)
         text = " ".join(seg.text.strip() for seg in segments).strip()
+        log(
+            "transcribed "
+            f"duration={info.duration:.1f}s, "
+            f"after_vad={info.duration_after_vad:.1f}s, "
+            f"segments={len(segments)}, chars={len(text)}"
+        )
 
         if text:
             type_text_safe(text)
