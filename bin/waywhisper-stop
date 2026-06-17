@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SERVICE_NAME="${WAYWHISPER_SERVICE:-waywhisper.service}"
+
+systemctl --user stop "$SERVICE_NAME"
+notify-send WayWhisper "Stopped" 2>/dev/null || true

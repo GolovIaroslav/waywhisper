@@ -95,8 +95,10 @@ install_files() {
   info "installing files"
   run install -Dm755 "$ROOT_DIR/bin/waywhisper-daemon" "$BIN_DIR/waywhisper-daemon"
   run install -Dm755 "$ROOT_DIR/bin/waywhisper-toggle" "$BIN_DIR/waywhisper-toggle"
+  run install -Dm755 "$ROOT_DIR/bin/waywhisper-stop" "$BIN_DIR/waywhisper-stop"
   run install -Dm644 "$ROOT_DIR/systemd/waywhisper.service" "$SYSTEMD_DIR/waywhisper.service"
   run install -Dm644 "$ROOT_DIR/desktop/waywhisper-toggle.desktop" "$DESKTOP_DIR/waywhisper-toggle.desktop"
+  run install -Dm644 "$ROOT_DIR/desktop/waywhisper-stop.desktop" "$DESKTOP_DIR/waywhisper-stop.desktop"
 
   if [[ "$DRY_RUN" == true ]]; then
     info "would create or update config at $ENV_FILE"
@@ -115,6 +117,8 @@ install_files() {
 
   ensure_config_key WAYWHISPER_VAD_FILTER false
   ensure_config_key WAYWHISPER_CONDITION_ON_PREVIOUS_TEXT false
+  ensure_config_key WAYWHISPER_PASTE_MODE clipboard
+  ensure_config_key WAYWHISPER_EXIT_AFTER_TRANSCRIBE false
 }
 
 create_python_env() {

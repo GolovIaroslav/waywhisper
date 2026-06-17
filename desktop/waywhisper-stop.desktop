@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=WayWhisper Stop
+Exec=waywhisper-stop
+NoDisplay=true
+StartupNotify=false
+X-KDE-GlobalAccel-CommandShortcut=true

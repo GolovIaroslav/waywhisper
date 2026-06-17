@@ -50,6 +50,7 @@ VAD_SPEECH_PAD_MS = env_int("WAYWHISPER_VAD_SPEECH_PAD_MS", 500)
 VAD_FILTER = env_bool("WAYWHISPER_VAD_FILTER", False)
 CONDITION_ON_PREVIOUS_TEXT = env_bool("WAYWHISPER_CONDITION_ON_PREVIOUS_TEXT", False)
 PASTE_MODE = os.environ.get("WAYWHISPER_PASTE_MODE", "clipboard").lower()
+EXIT_AFTER_TRANSCRIBE = env_bool("WAYWHISPER_EXIT_AFTER_TRANSCRIBE", False)
 LAST_TEXT_FILE = os.path.expanduser(
     os.environ.get("WAYWHISPER_LAST_TEXT_FILE", "~/.cache/waywhisper/last.txt")
 )
@@ -103,6 +104,10 @@ def gpu_memory_free_mib():
         return None
 
 
+def has_nvidia_gpu():
+    return gpu_memory_free_mib() is not None
+
+
 def model_vram_hint_mib(model_name):
     lowered = model_name.lower()
     for key, value in MODEL_VRAM_HINTS_MIB.items():
@@ -137,6 +142,7 @@ def choose_runtime():
             )
             device = "cpu"
         else:
+            notify("WayWhisper", "CUDA GPU was not detected. Using CPU.")
             device = "cpu"
 
     if requested_compute != "auto":
@@ -152,6 +158,10 @@ def choose_runtime():
                 "WayWhisper",
                 f"Low VRAM for {MODEL_NAME}: {free_mib}/{need_mib} MiB free.",
             )
+    elif not has_nvidia_gpu() and shutil.which("rocm-smi"):
+        log("ROCm was detected, but this install uses the reliable CPU backend.")
+    elif "large" in MODEL_NAME.lower():
+        notify("WayWhisper", f"{MODEL_NAME} on CPU can be slow. Try WAYWHISPER_MODEL=small.")
 
     return device, compute_type
 
@@ -322,6 +332,10 @@ def transcribe_and_type():
             notify("WayWhisper", "No speech recognized")
     finally:
         os.unlink(tmp_path)
+
+    if EXIT_AFTER_TRANSCRIBE:
+        notify("WayWhisper", "Stopped to free memory")
+        os._exit(0)
 
 
 def toggle_recording(_sig, _frame):
