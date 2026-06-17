@@ -53,10 +53,16 @@ WAYWHISPER_DEVICE=auto
 WAYWHISPER_COMPUTE_TYPE=auto
 WAYWHISPER_PASTE_MODE=clipboard
 WAYWHISPER_STOP_TAIL_SECONDS=1.0
+WAYWHISPER_VAD_FILTER=false
+WAYWHISPER_CONDITION_ON_PREVIOUS_TEXT=false
 ```
 
 Set `WAYWHISPER_PASTE_MODE=copy` if you only want to copy text and paste it
 manually.
+
+For long dictation, `WAYWHISPER_VAD_FILTER=false` is the safer default. Whisper
+will process the whole recording in 30-second windows. If you mostly dictate
+short messages in a noisy room, you can try `WAYWHISPER_VAD_FILTER=true`.
 
 ## GPU and games
 
@@ -87,6 +93,10 @@ systemctl --user status waywhisper
 systemctl --user restart waywhisper
 journalctl --user -u waywhisper -f
 ```
+
+The daemon logs the recorded duration, transcribed duration, segment count, and
+character count to the user journal. That is useful when a long recording
+unexpectedly produces very little text.
 
 ## Notes
 

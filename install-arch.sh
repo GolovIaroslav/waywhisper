@@ -46,6 +46,15 @@ detect_default_source() {
   pactl get-default-source 2>/dev/null || printf '@DEFAULT_SOURCE@'
 }
 
+ensure_config_key() {
+  local key="$1"
+  local value="$2"
+
+  if ! grep -q "^${key}=" "$ENV_FILE"; then
+    printf '%s=%s\n' "$key" "$value" >> "$ENV_FILE"
+  fi
+}
+
 install_files() {
   info "installing files"
   install -Dm755 "$ROOT_DIR/bin/waywhisper-daemon" "$BIN_DIR/waywhisper-daemon"
@@ -62,6 +71,9 @@ install_files() {
   else
     info "keeping existing config at $ENV_FILE"
   fi
+
+  ensure_config_key WAYWHISPER_VAD_FILTER false
+  ensure_config_key WAYWHISPER_CONDITION_ON_PREVIOUS_TEXT false
 }
 
 create_python_env() {
