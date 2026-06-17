@@ -11,7 +11,7 @@ is not tied to Plasma. On other Wayland desktops you can bind
 ## Install on Arch Linux
 
 ```bash
-git clone https://github.com/your-name/waywhisper.git
+git clone https://github.com/GolovIaroslav/waywhisper.git
 cd waywhisper
 ./install-arch.sh
 ```
