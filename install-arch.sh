@@ -212,29 +212,39 @@ EOF
 
 WayWhisper is installed.
 
-KDE Plasma shortcut:
-  1. Open System Settings -> Keyboard -> Shortcuts.
-  2. Add an application/command shortcut for:
-       $BIN_DIR/waywhisper-toggle
-  3. Bind it to Meta+H, Win+H, or any key you like.
+--- Required: add a keyboard shortcut ---
 
-Useful commands:
+  System Settings -> Keyboard -> Shortcuts -> Add Command:
+    Command: $BIN_DIR/waywhisper-toggle
+    Key:     Win+H (or any key you like)
+
+  Press once to start recording (you will see a "Recording" notification).
+  Press again to stop — the transcribed text will be typed into the active field.
+
+--- Useful commands (only needed if something is wrong) ---
+
+  # Check if the daemon is running and see recent errors
   systemctl --user status waywhisper
-  systemctl --user restart waywhisper
-  systemctl --user stop waywhisper
+
+  # Watch live logs (model download progress, transcription, errors)
   journalctl --user -u waywhisper -f
 
-Before launching a game or another VRAM-heavy app, stop the daemon:
+  # Restart the daemon after editing the config
+  systemctl --user restart waywhisper
+
+  # Stop the daemon before launching a game to free VRAM
   systemctl --user stop waywhisper
 
-Start it again afterwards:
+  # Start it again after the game
   systemctl --user start waywhisper
 
-Config:
-  $ENV_FILE
+--- Files ---
 
-Last transcript backup:
-  $HOME/.cache/waywhisper/last.txt
+  Config (microphone, model, language, etc.):
+    $ENV_FILE
+
+  Last transcribed text (fallback if it did not paste):
+    $HOME/.cache/waywhisper/last.txt
 
 EOF
 }
