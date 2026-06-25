@@ -172,7 +172,16 @@ def load_model():
 
     device, compute_type = choose_runtime()
     notify("WayWhisper", f"Loading {MODEL_NAME} on {device}...")
-    model = WhisperModel(MODEL_NAME, device=device, compute_type=compute_type)
+    try:
+        model = WhisperModel(MODEL_NAME, device=device, compute_type=compute_type)
+    except RuntimeError as e:
+        if device == "cpu" or not _is_missing_gpu_lib(e):
+            raise
+        log(f"GPU init failed ({e}), retrying on CPU")
+        notify("WayWhisper", "GPU libraries not found — switching to CPU...")
+        model = WhisperModel(MODEL_NAME, device="cpu", compute_type="int8")
+        notify("WayWhisper", "Ready (CPU mode). Add WAYWHISPER_DEVICE=cpu to config to skip this next time.")
+        return
     notify("WayWhisper", "Ready")
 
 
