@@ -150,8 +150,12 @@ create_python_env() {
   fi
 
   info "installing Python packages"
-  "$APP_HOME/venv/bin/python" -m pip install --upgrade pip wheel
-  "$APP_HOME/venv/bin/python" -m pip install --upgrade faster-whisper
+  if command -v uv >/dev/null 2>&1; then
+    uv pip install --python "$APP_HOME/venv" faster-whisper
+  else
+    "$APP_HOME/venv/bin/python" -m pip install --upgrade pip wheel
+    "$APP_HOME/venv/bin/python" -m pip install --upgrade faster-whisper
+  fi
 }
 
 show_vram_note() {
