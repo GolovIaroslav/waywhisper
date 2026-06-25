@@ -176,6 +176,21 @@ def load_model():
     notify("WayWhisper", "Ready")
 
 
+def _reload_model_cpu():
+    global model
+    from faster_whisper import WhisperModel
+
+    log("GPU libraries not available, reloading model on CPU")
+    notify("WayWhisper", "GPU libraries not found — switching to CPU...")
+    model = WhisperModel(MODEL_NAME, device="cpu", compute_type="int8")
+    notify("WayWhisper", "Ready (CPU mode). Add WAYWHISPER_DEVICE=cpu to config to skip this next time.")
+
+
+def _is_missing_gpu_lib(exc: RuntimeError) -> bool:
+    msg = str(exc).lower()
+    return "cannot be loaded" in msg or "not found or cannot" in msg
+
+
 def is_screen_locked():
     try:
         result = subprocess.run(
@@ -300,21 +315,41 @@ def transcribe_and_type():
 
     try:
         notify("WayWhisper", "Transcribing...")
-        segments, info = model.transcribe(
-            tmp_path,
-            language=LANGUAGE,
-            beam_size=5,
-            vad_filter=VAD_FILTER,
-            vad_parameters=dict(
-                threshold=VAD_THRESHOLD,
-                min_silence_duration_ms=VAD_MIN_SILENCE_MS,
-                min_speech_duration_ms=100,
-                max_speech_duration_s=CHUNK_LENGTH,
-                speech_pad_ms=VAD_SPEECH_PAD_MS,
-            ),
-            chunk_length=CHUNK_LENGTH,
-            condition_on_previous_text=CONDITION_ON_PREVIOUS_TEXT,
-        )
+        try:
+            segments, info = model.transcribe(
+                tmp_path,
+                language=LANGUAGE,
+                beam_size=5,
+                vad_filter=VAD_FILTER,
+                vad_parameters=dict(
+                    threshold=VAD_THRESHOLD,
+                    min_silence_duration_ms=VAD_MIN_SILENCE_MS,
+                    min_speech_duration_ms=100,
+                    max_speech_duration_s=CHUNK_LENGTH,
+                    speech_pad_ms=VAD_SPEECH_PAD_MS,
+                ),
+                chunk_length=CHUNK_LENGTH,
+                condition_on_previous_text=CONDITION_ON_PREVIOUS_TEXT,
+            )
+        except RuntimeError as e:
+            if not _is_missing_gpu_lib(e):
+                raise
+            _reload_model_cpu()
+            segments, info = model.transcribe(
+                tmp_path,
+                language=LANGUAGE,
+                beam_size=5,
+                vad_filter=VAD_FILTER,
+                vad_parameters=dict(
+                    threshold=VAD_THRESHOLD,
+                    min_silence_duration_ms=VAD_MIN_SILENCE_MS,
+                    min_speech_duration_ms=100,
+                    max_speech_duration_s=CHUNK_LENGTH,
+                    speech_pad_ms=VAD_SPEECH_PAD_MS,
+                ),
+                chunk_length=CHUNK_LENGTH,
+                condition_on_previous_text=CONDITION_ON_PREVIOUS_TEXT,
+            )
         segments = list(segments)
         text = " ".join(seg.text.strip() for seg in segments).strip()
         log(
