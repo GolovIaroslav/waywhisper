@@ -215,11 +215,17 @@ WayWhisper is installed.
 --- Required: add a keyboard shortcut ---
 
   System Settings -> Keyboard -> Shortcuts -> Add Command:
-    Command: $BIN_DIR/waywhisper-toggle
-    Key:     Win+H (or any key you like)
 
-  Press once to start recording (you will see a "Recording" notification).
-  Press again to stop — the transcribed text will be typed into the active field.
+    1. Toggle recording (required):
+       Command: $BIN_DIR/waywhisper-toggle
+       Key:     Win+H (or any key you like)
+
+       Press once to start recording (you will see a "Recording" notification).
+       Press again to stop — the transcribed text will be typed into the active field.
+
+    2. Stop daemon / free memory (optional but handy before gaming):
+       Command: $BIN_DIR/waywhisper-stop
+       Key:     Win+Alt+H (or any key you like)
 
 --- Useful commands (only needed if something is wrong) ---
 
